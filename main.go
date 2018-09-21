@@ -16,7 +16,7 @@ import (
 var db *sqlx.DB
 
 type (
-	Event struct {
+	event struct {
 		ID          int64     `json:"id" db:"id"`
 		Name        string    `json:"name,omitempty" db:"name"`
 		ImageURL    string    `json:"imageURL,omitempty" db:"imageUrl"`
@@ -31,6 +31,11 @@ type (
 		OwnerID     int64     `json:"owner_id,omitempty" db:"owner"`
 		EventTypeID int64     `json:"event_type_id,omitempty" db:"type"`
 	}
+
+	latlong struct {
+		X float32
+		Y float32
+	}
 )
 
 func main() {
@@ -42,6 +47,7 @@ func initEcho() {
 	e := echo.New()
 	e.Use(middleware.Logger())
 	e.Use(middleware.Recover())
+	e.Pre(middleware.RemoveTrailingSlash())
 
 	e.Use(middleware.CORSWithConfig(middleware.CORSConfig{
 		AllowOrigins: []string{"*"},
@@ -50,11 +56,11 @@ func initEcho() {
 
 	e.Use(middleware.BodyLimit("16K"))
 
-	e.POST("/event", CreateEvent)
-	e.PUT("/event/:id", UpdateEvent)
-	e.GET("/event/:id", GetEvent)
-	e.GET("/events", GetEvents)
-	e.DELETE("/event:/id", DeleteEvent)
+	e.POST("/api/event", createEvent)
+	e.PUT("/api/event/:id", updateEvent)
+	e.GET("/api/event/:id", getEvent)
+	e.GET("/api/events", getEvents)
+	e.DELETE("/api/event:/id", deleteEvent)
 
 	e.Logger.Fatal(e.Start(":8080"))
 }
@@ -72,27 +78,27 @@ func initDB() {
 	}
 }
 
-func GetEvents(c echo.Context) error {
+func getEvents(c echo.Context) error {
 
-	var evnt []Event
-	err := db.Select(&evnt, "SELECT * FROM events")
+	var evnt []event
+	err := db.Select(&evnt, "SELECT * FROM events LIMIT 10")
 	if err != nil {
-		log.Fatal(err)
+		return c.JSON(http.StatusBadRequest, err)
 	}
 
 	return c.JSON(http.StatusOK, evnt)
 }
 
-func GetEvent(c echo.Context) error {
+func getEvent(c echo.Context) error {
 	id := c.Param("id")
 
-	var evnt Event
+	var evnt event
 	err := db.Get(&evnt, "SELECT * FROM events WHERE id = $1", id)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return c.JSON(http.StatusNoContent, "")
 		}
-		log.Fatal(err)
+		return c.JSON(http.StatusBadRequest, err)
 	}
 
 	// defer stmt.Close()
@@ -100,30 +106,43 @@ func GetEvent(c echo.Context) error {
 	return c.JSON(http.StatusOK, evnt)
 }
 
-func CreateEvent(c echo.Context) error {
-	evnt := new(Event)
+func createEvent(c echo.Context) error {
+	evnt := new(event)
 	if err := c.Bind(evnt); err != nil {
-		log.Fatal(err)
+		return c.JSON(http.StatusBadRequest, err)
 	}
 
-	stmt, err := db.Prepare("INSERT into events VALUES RETURNING id")
+	query := `INSERT into events(
+			name, "imageUrl", "dateStart", "dateEnd", "appDeadline",
+			latlng, location, description, price, "maxPlayers",
+			owner, type
+		)
+		VALUES(
+			:name, :imageUrl, :dateStart, :dateEnd, :appDeadline,
+			:latlng, :location, :description, :price, :maxPlayers,
+			:owner, :type
+		)
+		RETURNING id`
+
+	stmt, err := db.PrepareNamed(query)
 	if err != nil {
-		log.Fatal(err)
+		return c.JSON(http.StatusBadRequest, err)
 	}
 	defer stmt.Close()
 
-	result, err := stmt.Exec(evnt)
+	var id int
+	err = stmt.Get(&id, evnt)
 	if err != nil {
-		log.Fatal(err)
+		return c.JSON(http.StatusBadRequest, err)
 	}
 
-	return c.JSON(http.StatusCreated, result)
+	return c.JSON(http.StatusCreated, id)
 }
 
-func DeleteEvent(c echo.Context) error {
+func deleteEvent(c echo.Context) error {
 	return c.JSON(http.StatusBadRequest, "")
 }
 
-func UpdateEvent(c echo.Context) error {
+func updateEvent(c echo.Context) error {
 	return c.JSON(http.StatusBadRequest, "")
 }
